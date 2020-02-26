@@ -13,7 +13,7 @@ jobs:
       run: |
         wget -q https://www.virtualbox.org/download/oracle_vbox_2016.asc -O- | sudo apt-key add -
         wget -q https://www.virtualbox.org/download/oracle_vbox.asc -O- | sudo apt-key add -
-        sudo echo -e "\ndeb [arch=amd64] https://download.virtualbox.org/virtualbox/debian bionic contrib\n" >> /etc/apt/sources.list
+        echo -e "\ndeb [arch=amd64] https://download.virtualbox.org/virtualbox/debian bionic contrib\n" | sudo tee -a /etc/apt/sources.list
         sudo apt-get update
         sudo apt-get install virtualbox-6.1
         wget -q https://homepages.cwi.nl/~hannes/86Cv27lf5353lJR/Solaris10_1-13.ova
