@@ -14,7 +14,7 @@ jobs:
         sudo apt install -y virtualbox
         VBoxManage list vms
         wget -q https://homepages.cwi.nl/~hannes/86Cv27lf5353lJR/Solaris10_1-13.ova
-        VBoxManage import Solaris10_1-13_VM.ova
+        VBoxManage import Solaris10_1-13.ova
         VBoxManage modifyvm "Solaris10_1-13" --natpf1 ssh,tcp,0.0.0.0,2222,0.0.0.0,22
         VBoxManage modifyvm "Solaris10_1-13" --usb off
         VBoxManage modifyvm "Solaris10_1-13" --usbehci off
