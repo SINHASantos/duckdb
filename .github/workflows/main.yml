@@ -16,6 +16,9 @@ jobs:
         wget -q https://homepages.cwi.nl/~hannes/86Cv27lf5353lJR/Solaris10_1-13_VM.ova
         VBoxManage import Solaris10_1-13_VM.ova
         VBoxManage modifyvm "Solaris10_1-13" --natpf1 ssh,tcp,0.0.0.0,2222,0.0.0.0,22
+        VBoxManage modifyvm "Solaris10_1-13" --usbohci off
+        VBoxManage modifyvm "Solaris10_1-13" --usbehci off
+        VBoxManage modifyvm "Solaris10_1-13" --usbxhci off
         VBoxManage startvm "Solaris10_1-13" --type headless
         for (( ; ; )); do ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@localhost:2222 ls; sleep 1; done
         
