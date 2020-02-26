@@ -13,7 +13,7 @@ jobs:
       run: |
         sudo apt install -y virtualbox
         VBoxManage list vms
-        wget https://homepages.cwi.nl/~hannes/86Cv27lf5353lJR/Solaris10_1-13_VM.ova
+        wget -q https://homepages.cwi.nl/~hannes/86Cv27lf5353lJR/Solaris10_1-13_VM.ova
         VBoxManage import Solaris10_1-13_VM.ova
         VBoxManage modifyvm --natpf1 ssh,tcp,0.0.0.0,2222,0.0.0.0,22
         VBoxManage startvm "Solaris10_1-13" --type headless
