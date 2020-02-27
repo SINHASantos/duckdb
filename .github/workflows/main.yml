@@ -23,7 +23,7 @@ jobs:
         export SCMD="ssh $SSHFLAGS -p 2222 root@localhost"
         sleep 60
         while ! $SCMD ls ; do sleep 30 ; done
-        $SCMD "echo 'Hello from the past'"
+        $SCMD "echo 'Hello from the distant past'"
         $SCMD ping www.google.com
         scp -q $SSHFLAGS -P 2222 -r . root@localhost:/duckdb
         $SCMD "rm -rf /duckdb/build && mkdir -p /duckdb/build && cd /duckdb/build && export PATH=/opt/csw/bin/:$PATH CXX=g++ CC=gcc  && cmake -DCMAKE_AR=/opt/csw/bin/gar -DCMAKE_BUILD_TYPE=Debug .. && cmake --build ."
