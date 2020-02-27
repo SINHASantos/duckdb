@@ -1,4 +1,4 @@
-name: Solaris
+name: CI
 
 on: [push]
 
