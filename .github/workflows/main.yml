@@ -1,4 +1,4 @@
-name: Solaris build
+name: Solaris
 
 on: [push]
 
