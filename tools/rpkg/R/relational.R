@@ -31,7 +31,9 @@ expr_constant <- rapi_expr_constant
 #' @noRd
 #' @examples
 #' call_expr <- expr_function("ABS", list(expr_constant(-42)))
-expr_function <- rapi_expr_function
+expr_function <- function(name, args, order_bys = list(), filter_bys = list()) {
+  rapi_expr_function(name, args, order_bys, filter_bys)
+}
 
 #' Convert an expression to a string for debugging purposes
 #' @param expr the expression
@@ -122,7 +124,7 @@ rel_project <- rapi_rel_project
 #' @noRd
 #' @examples
 #' con <- DBI::dbConnect(duckdb())
-#' DBI::dbExecute(con, "CREATE MACRO gt(a, b) AS a > b")
+#' DBI::dbExecute(con, "CREATE OR REPLACE MACRO gt(a, b) AS a > b")
 #' rel <- rel_from_df(con, mtcars)
 #' rel2 <- rel_filter(rel, list(expr_function("gt", list(expr_reference("cyl"), expr_constant("6")))))
 rel_filter <- rapi_rel_filter
@@ -151,24 +153,87 @@ rel_aggregate <- rapi_rel_aggregate
 #' rel2 <- rel_order(rel, list(expr_reference("hp")))
 rel_order <- rapi_rel_order
 
+#' Get an external pointer pointing to NULL
+#' @return an external pointer pointing to null_ptr.
+#' @noRd
+#' @examples
+#' null_ptr <- sexp_null_ptr()
+sexp_null_ptr <- rapi_get_null_SEXP_ptr
+
+expr_window <- function(window_function, partitions=list(), order_bys=list(),
+                        window_boundary_start="unbounded_preceding",
+                        window_boundary_end="current_row_range",
+                        start_expr = NULL, end_expr=NULL, offset_expr=NULL, default_expr=NULL) {
+    null_ptr <- sexp_null_ptr()
+    if (is.null(start_expr)) {
+      start_expr <- null_ptr
+    }
+    if (is.null(end_expr)) {
+      end_expr <- null_ptr
+    }
+    if (is.null(offset_expr)) {
+      offset_expr <- null_ptr
+    }
+    if (is.null(default_expr)) {
+      default_expr <- null_ptr
+    }
+    expr_window_(window_function, partitions, order_bys, tolower(window_boundary_start), tolower(window_boundary_end), start_expr, end_expr, offset_expr, default_expr)
+}
+
+window_boundaries <- c("unbounded_preceding",
+                       "unbounded_following",
+                       "current_row_range",
+                       "current_row_rows",
+                       "expr_preceding_rows",
+                       "expr_following_rows",
+                       "expr_preceding_range")
+
+expr_window_ <- function (window_function, partitions=list(), order_bys=list(), window_boundary_start=window_boundaries,
+          window_boundary_end=window_boundaries, start_expr = list(), end_expr=list(), offset_expr=list(), default_expr=list()) {
+    window_boundary_start <- match.arg(window_boundary_start)
+    window_boundary_end <- match.arg(window_boundary_end)
+    rapi_expr_window(window_function, partitions, order_bys, window_boundary_start, window_boundary_end, start_expr, end_expr, offset_expr, default_expr)
+}
+
 #' Lazily INNER join two DuckDB relation objects
 #' @param left the left-hand-side DuckDB relation object
 #' @param right the right-hand-side DuckDB relation object
 #' @param conds a list of DuckDB expressions to use for the join
+#' @param join a string describing the join type (either "inner", "left", "right", or "outer")
 #' @return a new `duckdb_relation` object resulting from the join
 #' @noRd
 #' @examples
 #' con <- DBI::dbConnect(duckdb())
-#' DBI::dbExecute(con, "CREATE MACRO eq(a, b) AS a = b")
+#' DBI::dbExecute(con, "CREATE OR REPLACE MACRO eq(a, b) AS a = b")
 #' left <- rel_from_df(con, mtcars)
 #' right <- rel_from_df(con, mtcars)
 #' cond <- list(expr_function("eq", list(expr_reference("cyl", left), expr_reference("cyl", right))))
-#' rel2 <- rel_inner_join(left, right, cond)
-rel_inner_join <- rapi_rel_inner_join
+#' rel2 <- rel_join(left, right, cond, "inner")
+#' rel2 <- rel_join(left, right, cond, "right")
+#' rel2 <- rel_join(left, right, cond, "left")
+#' rel2 <- rel_join(left, right, cond, "outer")
+
+rel_inner_join <- function(left, right, conds) {
+  rel_join(left, right, conds, "inner", "regular")
+}
+
+rel_join <- function(left, right, conds,
+                     join = c("inner", "left", "right", "outer", "cross", "semi", "anti"),
+                     join_ref_type = c("regular", "natural", "cross", "positional", "asof")) {
+  join <- match.arg(join)
+  join_ref_type <- match.arg(join_ref_type)
+  # the ref type is naturally regular. Users won't write rel_join(left, right, conds, "cross", "cross")
+  # so we update it here.
+  if (join == "cross" && join_ref_type == "regular") {
+    join_ref_type <- "cross"
+  }
+  rapi_rel_join(left, right, conds, join, join_ref_type)
+}
 
 #' UNION ALL on two DuckDB relation objects
 #' @param rel_a a DuckDB relation object
 #' @param rel_b a DuckDB relation object
+#' @return a new `duckdb_relation` object resulting from the union
 #' @noRd
 #' @examples
 #' con <- DBI::dbConnect(duckdb())
@@ -186,6 +251,39 @@ rel_union_all <- rapi_rel_union_all
 #' rel <- rel_from_df(con, mtcars)
 #' rel2 <- rel_distinct(rel)
 rel_distinct <- rapi_rel_distinct
+
+#' SET INTERSECT on two DuckDB relation objects
+#' @param rel_a a DuckDB relation object
+#' @param rel_b a DuckDB relation object
+#' @return a new `duckdb_relation` object resulting from the intersection
+#' @noRd
+#' @examples
+#' rel_a <- rel_from_df(con, mtcars)
+#' rel_b <- rel_from_df(con, mtcars)
+#' rel_set_intersect_all(rel_a, rel_b)
+rel_set_intersect <- rapi_rel_set_intersect
+
+#' SET DIFF on two DuckDB relation objects
+#' @param rel_a a DuckDB relation object
+#' @param rel_b a DuckDB relation object
+#' @return a new `duckdb_relation` object resulting from the set difference
+#' @noRd
+#' @examples
+#' rel_a <- rel_from_df(con, mtcars)
+#' rel_b <- rel_from_df(con, mtcars)
+#' rel_set_diff(rel_a, rel_b)
+rel_set_diff <- rapi_rel_set_diff
+
+#' SET SYMDIFF on two DuckDB relation objects
+#' @param rel_a a DuckDB relation object
+#' @param rel_b a DuckDB relation object
+#' @return a new `duckdb_relation` object resulting from the symmetric difference of rel_a and rel_b
+#' @noRd
+#' @examples
+#' rel_a <- rel_from_df(con, mtcars)
+#' rel_b <- rel_from_df(con, mtcars)
+#' rel_set_symdiff(rel_a, rel_b)
+rel_set_symdiff <- rapi_rel_set_symdiff
 
 #' Run a SQL query on a DuckDB relation object
 #' @param rel the DuckDB relation object
@@ -263,3 +361,43 @@ rel_from_altrep_df <- rapi_rel_from_altrep_df
 #' str(df)
 #' stopifnot(df_is_materialized(df))
 df_is_materialized <- rapi_df_is_materialized
+
+
+
+#' Convert a relation to a SQL string
+#' @param rel the DuckDB relation object
+#' @return a SQL string
+#' @noRd
+#' @examples
+#' con <- DBI::dbConnect(duckdb())
+#' rel <- rel_from_df(con, mtcars)
+#' print(rel_to_sql(rel))
+rel_to_sql <- rapi_rel_to_sql
+
+
+
+#' Create a duckdb table relation from a table name
+#' @param table the table name
+#' @return a duckdb relation
+#' @noRd
+#' @examples
+#' con <- DBI::dbConnect(duckdb())
+#' DBI::dbWriteTable(con, "mtcars", mtcars)
+#' rel <- rel_from_table(con, "mtcars")
+rel_from_table <- function(con, table_name, schema_name="MAIN") {
+    rapi_rel_from_table(con@conn_ref, schema_name, table_name)
+}
+
+#' Convert a duckdb relation from a table-producing function
+#' @param name the table function name
+#' @param positional_parameters the table function positional parameters list
+#' @param named_parameters the table function named parameters list
+#' @return a duckdb relation
+#' @noRd
+#' @examples
+#' con <- DBI::dbConnect(duckdb())
+#' rel <- rel_from_table_function(con, 'generate_series', list(10L))
+rel_from_table_function <- function(con, function_name, positional_parameters = list(), named_parameters = list()) {
+    rapi_rel_from_table_function(con@conn_ref, function_name, positional_parameters, named_parameters)
+}
+

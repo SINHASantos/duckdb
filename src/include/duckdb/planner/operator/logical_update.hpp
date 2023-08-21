@@ -9,18 +9,19 @@
 #pragma once
 
 #include "duckdb/planner/logical_operator.hpp"
-#include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 
 namespace duckdb {
+class TableCatalogEntry;
 
 class LogicalUpdate : public LogicalOperator {
 public:
-	explicit LogicalUpdate(TableCatalogEntry *table)
-	    : LogicalOperator(LogicalOperatorType::LOGICAL_UPDATE), table(table), table_index(0), return_chunk(false) {
-	}
+	static constexpr const LogicalOperatorType TYPE = LogicalOperatorType::LOGICAL_UPDATE;
+
+public:
+	explicit LogicalUpdate(TableCatalogEntry &table);
 
 	//! The base table to update
-	TableCatalogEntry *table;
+	TableCatalogEntry &table;
 	//! table catalog index
 	idx_t table_index;
 	//! if returning option is used, return the update chunk
@@ -32,22 +33,17 @@ public:
 public:
 	void Serialize(FieldWriter &writer) const override;
 	static unique_ptr<LogicalOperator> Deserialize(LogicalDeserializationState &state, FieldReader &reader);
+	void FormatSerialize(FormatSerializer &serializer) const override;
+	static unique_ptr<LogicalOperator> FormatDeserialize(FormatDeserializer &deserializer);
+
 	idx_t EstimateCardinality(ClientContext &context) override;
+	string GetName() const override;
 
 protected:
-	vector<ColumnBinding> GetColumnBindings() override {
-		if (return_chunk) {
-			return GenerateColumnBindings(table_index, table->GetTypes().size());
-		}
-		return {ColumnBinding(0, 0)};
-	}
+	vector<ColumnBinding> GetColumnBindings() override;
+	void ResolveTypes() override;
 
-	void ResolveTypes() override {
-		if (return_chunk) {
-			types = table->GetTypes();
-		} else {
-			types.emplace_back(LogicalType::BIGINT);
-		}
-	}
+private:
+	LogicalUpdate(ClientContext &context, const string &catalog, const string &schema, const string &table);
 };
 } // namespace duckdb

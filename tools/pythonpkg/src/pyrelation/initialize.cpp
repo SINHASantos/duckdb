@@ -1,10 +1,9 @@
 #include "duckdb_python/pyrelation.hpp"
-#include "duckdb_python/pyconnection.hpp"
+#include "duckdb_python/pyconnection/pyconnection.hpp"
 #include "duckdb_python/pyresult.hpp"
 #include "duckdb/parser/qualified_name.hpp"
 #include "duckdb/main/client_context.hpp"
-#include "duckdb_python/vector_conversion.hpp"
-#include "duckdb_python/pandas_type.hpp"
+#include "duckdb_python/numpy/numpy_type.hpp"
 #include "duckdb/main/relation/query_relation.hpp"
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/main/relation/view_relation.hpp"
@@ -21,6 +20,7 @@ static void InitializeReadOnlyProperties(py::class_<DuckDBPyRelation> &m) {
 	                           "Return a list containing the types of the columns of the relation.")
 	    .def_property_readonly("dtypes", &DuckDBPyRelation::ColumnTypes,
 	                           "Return a list containing the types of the columns of the relation.")
+	    .def_property_readonly("description", &DuckDBPyRelation::Description, "Return the description of the result")
 	    .def_property_readonly("alias", &DuckDBPyRelation::GetAlias, "Get the name of the current alias")
 	    .def("__len__", &DuckDBPyRelation::Length, "Number of rows in relation.")
 	    .def_property_readonly("shape", &DuckDBPyRelation::Shape, " Tuple of # of rows, # of columns in relation.");
@@ -28,23 +28,44 @@ static void InitializeReadOnlyProperties(py::class_<DuckDBPyRelation> &m) {
 
 static void InitializeConsumers(py::class_<DuckDBPyRelation> &m) {
 	m.def("execute", &DuckDBPyRelation::Execute, "Transform the relation into a result set")
-	    .def("write_csv", &DuckDBPyRelation::WriteCsv, "Write the relation object to a CSV file in file_name",
-	         py::arg("file_name"))
-	    .def("fetchone", &DuckDBPyRelation::Fetchone, "Execute and fetch a single row as a tuple")
-	    .def("fetchmany", &DuckDBPyRelation::Fetchmany, "Execute and fetch the next set of rows as a list of tuples",
+	    .def("close", &DuckDBPyRelation::Close, "Closes the result");
+
+	DefineMethod({"to_parquet", "write_parquet"}, m, &DuckDBPyRelation::ToParquet,
+	             "Write the relation object to a Parquet file in 'file_name'", py::arg("file_name"), py::kw_only(),
+	             py::arg("compression") = py::none());
+
+	DefineMethod(
+	    {"to_csv", "write_csv"}, m, &DuckDBPyRelation::ToCSV, "Write the relation object to a CSV file in 'file_name'",
+	    py::arg("file_name"), py::kw_only(), py::arg("sep") = py::none(), py::arg("na_rep") = py::none(),
+	    py::arg("header") = py::none(), py::arg("quotechar") = py::none(), py::arg("escapechar") = py::none(),
+	    py::arg("date_format") = py::none(), py::arg("timestamp_format") = py::none(), py::arg("quoting") = py::none(),
+	    py::arg("encoding") = py::none(), py::arg("compression") = py::none());
+
+	m.def("fetchone", &DuckDBPyRelation::FetchOne, "Execute and fetch a single row as a tuple")
+	    .def("fetchmany", &DuckDBPyRelation::FetchMany, "Execute and fetch the next set of rows as a list of tuples",
 	         py::arg("size") = 1)
-	    .def("fetchall", &DuckDBPyRelation::Fetchall, "Execute and fetch all rows as a list of tuples")
+	    .def("fetchall", &DuckDBPyRelation::FetchAll, "Execute and fetch all rows as a list of tuples")
 	    .def("fetchnumpy", &DuckDBPyRelation::FetchNumpy,
 	         "Execute and fetch all rows as a Python dict mapping each column to one numpy arrays")
-	    .def("df", &DuckDBPyRelation::ToDF, "Execute and fetch all rows as a pandas DataFrame", py::kw_only(),
+	    .def("df", &DuckDBPyRelation::FetchDF, "Execute and fetch all rows as a pandas DataFrame", py::kw_only(),
 	         py::arg("date_as_object") = false)
-	    .def("to_df", &DuckDBPyRelation::ToDF, "Execute and fetch all rows as a pandas DataFrame", py::kw_only(),
+	    .def("fetchdf", &DuckDBPyRelation::FetchDF, "Execute and fetch all rows as a pandas DataFrame", py::kw_only(),
+	         py::arg("date_as_object") = false)
+	    .def("to_df", &DuckDBPyRelation::FetchDF, "Execute and fetch all rows as a pandas DataFrame", py::kw_only(),
 	         py::arg("date_as_object") = false)
 	    .def("arrow", &DuckDBPyRelation::ToArrowTable, "Execute and fetch all rows as an Arrow Table",
 	         py::arg("batch_size") = 1000000)
+	    .def("fetch_arrow_table", &DuckDBPyRelation::ToArrowTable, "Execute and fetch all rows as an Arrow Table",
+	         py::arg("batch_size") = 1000000)
 	    .def("to_arrow_table", &DuckDBPyRelation::ToArrowTable, "Execute and fetch all rows as an Arrow Table",
 	         py::arg("batch_size") = 1000000)
+	    .def("pl", &DuckDBPyRelation::ToPolars, "Execute and fetch all rows as a Polars DataFrame",
+	         py::arg("batch_size") = 1000000)
+	    .def("torch", &DuckDBPyRelation::FetchPyTorch, "Fetch a result as dict of PyTorch Tensors")
+	    .def("tf", &DuckDBPyRelation::FetchTF, "Fetch a result as dict of TensorFlow Tensors")
 	    .def("record_batch", &DuckDBPyRelation::ToRecordBatch,
+	         "Execute and return an Arrow Record Batch Reader that yields all rows", py::arg("batch_size") = 1000000)
+	    .def("fetch_arrow_reader", &DuckDBPyRelation::ToRecordBatch,
 	         "Execute and return an Arrow Record Batch Reader that yields all rows", py::arg("batch_size") = 1000000);
 }
 
@@ -124,7 +145,7 @@ static void InitializeSetOperators(py::class_<DuckDBPyRelation> &m) {
 static void InitializeMetaQueries(py::class_<DuckDBPyRelation> &m) {
 	m.def("describe", &DuckDBPyRelation::Describe,
 	      "Gives basic statistics (e.g., min,max) and if null exists for each column of the relation.")
-	    .def("explain", &DuckDBPyRelation::Explain);
+	    .def("explain", &DuckDBPyRelation::Explain, py::arg("type") = "standard");
 }
 
 void DuckDBPyRelation::Initialize(py::handle &m) {
@@ -135,11 +156,21 @@ void DuckDBPyRelation::Initialize(py::handle &m) {
 	InitializeMetaQueries(relation_module);
 	InitializeConsumers(relation_module);
 
+	relation_module.def("__getattr__", &DuckDBPyRelation::GetAttribute,
+	                    "Get a projection relation created from this relation, on the provided column name",
+	                    py::arg("name"));
+	relation_module.def("__getitem__", &DuckDBPyRelation::GetAttribute,
+	                    "Get a projection relation created from this relation, on the provided column name",
+	                    py::arg("name"));
+
 	relation_module
 	    .def("filter", &DuckDBPyRelation::Filter, "Filter the relation object by the filter in filter_expr",
 	         py::arg("filter_expr"))
 	    .def("project", &DuckDBPyRelation::Project, "Project the relation object by the projection in project_expr",
-	         py::arg("project_expr"))
+	         py::arg("project_expr"));
+	DefineMethod({"select_types", "select_dtypes"}, relation_module, &DuckDBPyRelation::ProjectFromTypes,
+	             "Select columns from the relation, by filtering based on type(s)", py::arg("types"));
+	relation_module
 	    .def("set_alias", &DuckDBPyRelation::SetAlias, "Rename the relation object to new alias", py::arg("alias"))
 	    .def("order", &DuckDBPyRelation::Order, "Reorder the relation object by order_expr", py::arg("order_expr"))
 	    .def("aggregate", &DuckDBPyRelation::Aggregate,
@@ -168,15 +199,24 @@ void DuckDBPyRelation::Initialize(py::handle &m) {
 
 	    // Aren't these also technically consumers?
 	    .def("insert_into", &DuckDBPyRelation::InsertInto,
-	         "Inserts the relation object into an existing table named table_name", py::arg("table_name"))
-	    .def("create", &DuckDBPyRelation::Create,
-	         "Creates a new table named table_name with the contents of the relation object", py::arg("table_name"))
-	    .def("create_view", &DuckDBPyRelation::CreateView,
-	         "Creates a view named view_name that refers to the relation object", py::arg("view_name"),
-	         py::arg("replace") = true)
-	    .def("map", &DuckDBPyRelation::Map, py::arg("map_function"), "Calls the passed function on the relation")
-	    .def("__str__", &DuckDBPyRelation::Print)
-	    .def("__repr__", &DuckDBPyRelation::Print);
+	         "Inserts the relation object into an existing table named table_name", py::arg("table_name"));
+
+	DefineMethod({"create", "to_table"}, relation_module, &DuckDBPyRelation::Create,
+	             "Creates a new table named table_name with the contents of the relation object",
+	             py::arg("table_name"));
+
+	DefineMethod({"create_view", "to_view"}, relation_module, &DuckDBPyRelation::CreateView,
+	             "Creates a view named view_name that refers to the relation object", py::arg("view_name"),
+	             py::arg("replace") = true);
+
+	relation_module
+	    .def("map", &DuckDBPyRelation::Map, py::arg("map_function"), py::kw_only(), py::arg("schema") = py::none(),
+	         "Calls the passed function on the relation")
+	    .def("show", &DuckDBPyRelation::Print, "Display a summary of the data")
+	    .def("__str__", &DuckDBPyRelation::ToString)
+	    .def("__repr__", &DuckDBPyRelation::ToString);
+
+	relation_module.def("sql_query", &DuckDBPyRelation::ToSQL, "Get the SQL query that is equivalent to the relation");
 }
 
 } // namespace duckdb
